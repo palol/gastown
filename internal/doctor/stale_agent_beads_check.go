@@ -93,12 +93,15 @@ func (c *StaleAgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 	// would block the whole doctor for ~6 minutes. Parallelizing collapses
 	// the wall-clock time to roughly the slowest single rig.
 	// Investigation: dc-1pq8 (forensic report 2026-05-02).
-	var wg sync.WaitGroup
+	//
+	// Concurrency is bounded (see staleAgentBeadsScanConcurrency) so a
+	// growing rig count cannot amplify the subprocess/Dolt pressure this
+	// check was added to survive.
+	g := new(errgroup.Group)
+	g.SetLimit(staleAgentBeadsScanConcurrency)
 	for prefix, info := range prefixToRig {
-		wg.Add(1)
-		go func(prefix string, info rigInfo) {
-			defer wg.Done()
-
+		prefix, info := prefix, info
+		g.Go(func() error {
 			rigBeadsPath := filepath.Join(ctx.TownRoot, info.beadsPath)
 			bd := beads.New(rigBeadsPath)
 			rigName := info.name
@@ -128,7 +131,7 @@ func (c *StaleAgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 				Label:    "gt:agent",
 			})
 			if err != nil {
-				return
+				return nil
 			}
 
 			// Also check wisps table for migrated agent beads
@@ -161,9 +164,10 @@ func (c *StaleAgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 				stale = append(stale, rigStale...)
 				staleMu.Unlock()
 			}
-		}(prefix, info)
+			return nil
+		})
 	}
-	wg.Wait()
+	_ = g.Wait()
 
 	// Phase 2: Detect orphaned agent beads from deregistered rigs.
 	// Scan the town beads database for agent beads whose prefix doesn't match
