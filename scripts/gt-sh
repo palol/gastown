@@ -3,4 +3,15 @@
 # container where Dolt (port 3307) is accessible. Used instead of the local binary because
 # hooks run in /bin/sh (no zsh docker-compose function available) and the host binary
 # can't reach the containerized Dolt server.
-exec docker exec gastown-sandbox gt "$@"
+#
+# Translates host cwd ($HOME/gt/...) to container path (/gt/...) so gt can detect
+# the agent role from the working directory.
+case "$PWD" in
+  "$HOME/gt"*)
+    CONTAINER_CWD=$(printf '%s' "$PWD" | sed "s|$HOME/gt|/gt|")
+    exec docker exec -w "$CONTAINER_CWD" gastown-sandbox gt "$@"
+    ;;
+  *)
+    exec docker exec gastown-sandbox gt "$@"
+    ;;
+esac
