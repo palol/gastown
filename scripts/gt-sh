@@ -1,0 +1,6 @@
+#!/bin/sh
+# Thin wrapper for Claude Code hooks: routes gt commands into the running gastown-sandbox
+# container where Dolt (port 3307) is accessible. Used instead of the local binary because
+# hooks run in /bin/sh (no zsh docker-compose function available) and the host binary
+# can't reach the containerized Dolt server.
+exec docker exec gastown-sandbox gt "$@"
