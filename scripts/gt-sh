@@ -6,12 +6,14 @@
 #
 # Translates host cwd ($HOME/gt/...) to container path (/gt/...) so gt can detect
 # the agent role from the working directory.
+# Container name defined in ~/workspace/gastown/docker-compose.yml; override via GT_CONTAINER
+GT_CONTAINER="${GT_CONTAINER:-gastown-sandbox}"
 case "$PWD" in
   "$HOME/gt"*)
-    CONTAINER_CWD=$(printf '%s' "$PWD" | sed "s|$HOME/gt|/gt|")
-    exec docker exec -w "$CONTAINER_CWD" gastown-sandbox gt "$@"
+    CONTAINER_CWD=$(printf '%s' "$PWD" | sed "s|^$HOME/gt|/gt|")
+    exec docker exec -w "$CONTAINER_CWD" "$GT_CONTAINER" gt "$@"
     ;;
   *)
-    exec docker exec gastown-sandbox gt "$@"
+    exec docker exec "$GT_CONTAINER" gt "$@"
     ;;
 esac
