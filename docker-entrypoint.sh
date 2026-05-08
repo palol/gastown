@@ -15,8 +15,9 @@ if [ ! -f /gt/mayor/town.json ]; then
     echo "Initializing Gas Town workspace at /gt..."
     /app/gastown/gt install /gt --git
 else
-    echo "Refreshing Gas Town workspace at /gt..."
-    /app/gastown/gt install /gt --git --force
+    echo "Existing Gas Town workspace detected at /gt; skipping reinstall."
 fi
+
+(cd /gt && gt dolt start) || echo "Warning: could not start dolt server"
 
 exec "$@"
