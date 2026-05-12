@@ -1,0 +1,364 @@
+description = """
+Periodic town hygiene: verify reaper freshness, surface persistent zombie
+polecats, audit orphan ~/gt dirs, clean orphan Dolt databases, and prune
+dead dog worktrees.
+
+## Dog Contract
+
+Meta-infrastructure work — keeping the town clean. Each step complements
+(rather than duplicates) an existing process. Run to completion; all steps
+are safe to re-run.
+
+1. Verify mol-dog-reaper ran within reaper_max_age; dispatch if stale
+2. Detect polecats whose hook bead is older than stale_hook_age (persistent
+   crashers that stuck-agent-dog hasn't cleared) — escalate to Mayor
+3. Audit ~/gt/ for dirs absent from rigs.json — report + escalate, never delete
+4. Run `gt dolt cleanup` to remove orphan test databases
+5. Prune dead dog worktrees (dir present, tmux session dead)
+6. Generate summary + create audit bead
+
+## Variables
+
+| Variable       | Source | Description |
+|----------------|--------|-------------|
+| reaper_max_age | config | Hours since last reaper run before re-dispatch (default 12) |
+| stale_hook_age | config | Hours a hook bead must sit stale before escalation (default 6) |
+| dry_run        | config | If "true", report without modifying state |
+
+## Safety
+
+- Escalation-sweep dispatches mol-dog-reaper; it does not purge directly
+- Zombie detection escalates — does NOT kill sessions or delete worktrees
+- Orphan audit NEVER deletes — escalates to Mayor for human review
+- `gt dolt cleanup` has its own protections (excludes production DBs)
+- Worktree prune uses `git worktree remove` which refuses if worktree is dirty
+"""
+formula = "mol-hygiene-patrol"
+version = 1
+
+[squash]
+trigger = "on_complete"
+template_type = "work"
+include_metrics = true
+
+[[steps]]
+id = "reaper-freshness"
+title = "Verify mol-dog-reaper freshness; dispatch if stale"
+description = """
+Ensure the reaper ran within the last {{reaper_max_age}} hours.
+If not, dispatch a fresh run rather than duplicating purge logic here.
+
+**1. Find the most recent reaper audit bead:**
+```bash
+bd list --json -l plugin:mol-dog-reaper 2>/dev/null \
+  | python3 -c "
+import json, sys, datetime
+beads = json.load(sys.stdin)
+if not beads:
+    print('NEVER')
+else:
+    latest = max(beads, key=lambda b: b.get('updated_at', ''))
+    print(latest.get('updated_at', 'UNKNOWN'))
+"
+```
+
+**2. Compare to threshold:**
+```python
+import datetime
+cutoff = datetime.datetime.now(datetime.timezone.utc) \
+       - datetime.timedelta(hours={{reaper_max_age}})
+# If latest_ts < cutoff: reaper is stale
+```
+
+**3a. Reaper is fresh (last run within {{reaper_max_age}}h):**
+Log: `reaper-freshness: OK (last run: <timestamp>)`
+Skip to next step.
+
+**3b. Reaper is stale or has never run:**
+```bash
+{{#if dry_run}}
+echo "DRY-RUN: would dispatch mol-dog-reaper"
+{{else}}
+gt dog dispatch --formula mol-dog-reaper
+echo "Dispatched mol-dog-reaper (reaper was stale)"
+{{/if}}
+```
+If `gt dog dispatch` fails (no idle dogs), log and continue — this is non-fatal.
+
+**Exit criteria:** Reaper freshness assessed; dispatch fired if stale."""
+
+[[steps]]
+id = "zombie-polecat-report"
+title = "Surface persistent zombie polecats (hook stale > {{stale_hook_age}}h)"
+needs = ["reaper-freshness"]
+description = """
+stuck-agent-dog handles fresh crashes on a 5-minute cooldown. This step
+finds polecats where the hook bead has been stale for > {{stale_hook_age}}h,
+meaning multiple stuck-agent-dog cycles have failed to clear them. These
+need Mayor attention.
+
+**IMPORTANT:** Do NOT kill sessions or delete worktrees. Escalate only.
+
+**1. Load rigs:**
+```bash
+TOWN_ROOT="${GT_TOWN_ROOT:-$(gt town root 2>/dev/null)}"
+RIGS_JSON="$TOWN_ROOT/rigs.json"
+RIG_PREFIX_MAP=$(python3 -c "
+import json
+with open('$RIGS_JSON') as f:
+    d = json.load(f)
+for rig, cfg in d.get('rigs', {}).items():
+    prefix = cfg.get('beads', {}).get('prefix', rig)
+    print(f'{rig}|{prefix}')
+")
+```
+
+**2. For each rig, check polecats:**
+```bash
+STALE_POLECATS=()
+
+while IFS='|' read -r RIG PREFIX; do
+  [ -z "$RIG" ] && continue
+  POLECAT_DIR="$TOWN_ROOT/$RIG/polecats"
+  [ -d "$POLECAT_DIR" ] || continue
+
+  for PCAT_PATH in "$POLECAT_DIR"/*/; do
+    [ -d "$PCAT_PATH" ] || continue
+    PCAT_NAME=$(basename "$PCAT_PATH")
+    SESSION="${PREFIX}-${PCAT_NAME}"
+
+    # Skip polecats with live sessions (stuck-agent-dog's domain)
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      continue
+    fi
+
+    # Dead session — check hook bead
+    HOOK_OUTPUT=$(gt hook show "$RIG/polecats/$PCAT_NAME" 2>/dev/null | head -1)
+    HOOK_BEAD=$(echo "$HOOK_OUTPUT" | grep -v '(empty)' | awk '{print $2}' || true)
+    [ -z "$HOOK_BEAD" ] && continue
+
+    # Check hook bead age
+    HOOK_AGE_HOURS=$(bd show "$HOOK_BEAD" --json 2>/dev/null \
+      | python3 -c "
+import json, sys, datetime
+d = json.load(sys.stdin)
+bead = d[0] if isinstance(d, list) else d
+ts = bead.get('updated_at') or bead.get('created_at')
+if not ts:
+    print(9999)
+    sys.exit()
+dt = datetime.datetime.fromisoformat(ts.replace('Z','+00:00'))
+age = (datetime.datetime.now(datetime.timezone.utc) - dt).total_seconds() / 3600
+print(f'{age:.1f}')
+" 2>/dev/null || echo "0")
+
+    if python3 -c "import sys; sys.exit(0 if float('$HOOK_AGE_HOURS') > {{stale_hook_age}} else 1)" 2>/dev/null; then
+      STALE_POLECATS+=("$RIG/$PCAT_NAME (hook=$HOOK_BEAD age=${HOOK_AGE_HOURS}h)")
+    fi
+  done
+done <<< "$RIG_PREFIX_MAP"
+```
+
+**3. Escalate persistent zombies:**
+```bash
+if [ ${#STALE_POLECATS[@]} -gt 0 ]; then
+  DETAIL=$(printf '%s\n' "${STALE_POLECATS[@]}")
+  {{#if dry_run}}
+  echo "DRY-RUN: would escalate ${#STALE_POLECATS[@]} persistent zombies:"
+  echo "$DETAIL"
+  {{else}}
+  gt escalate -s HIGH \
+    "Hygiene patrol: ${#STALE_POLECATS[@]} polecat(s) stuck > {{stale_hook_age}}h" \
+    --reason "Polecats with stale hooks not cleared by stuck-agent-dog:
+$DETAIL"
+  {{/if}}
+fi
+```
+
+**Exit criteria:** Persistent zombies reported; Mayor notified if any found."""
+
+[[steps]]
+id = "orphan-repo-audit"
+title = "Audit ~/gt/ for unregistered rig directories"
+needs = ["zombie-polecat-report"]
+description = """
+Find dirs in ~/gt/ that look like repos but are absent from rigs.json.
+
+**IMPORTANT:** Never delete. Report only. Escalate if any found.
+
+**1. Load registered names and known system dirs:**
+```bash
+TOWN_ROOT="${GT_TOWN_ROOT:-$(gt town root 2>/dev/null)}"
+REGISTERED=$(python3 -c "
+import json
+with open('$TOWN_ROOT/rigs.json') as f:
+    d = json.load(f)
+names = set(d.get('rigs', {}).keys())
+print(' '.join(names))
+")
+KNOWN_SYSTEM="beads crew daemon deacon events hooks logs mayor plugins polecats refinery witness settings"
+ALL_KNOWN="$REGISTERED $KNOWN_SYSTEM"
+```
+
+**2. Check each subdirectory:**
+```bash
+ORPHANS=()
+for dir in "$TOWN_ROOT"/*/; do
+  name=$(basename "$dir")
+  [[ "$name" == .* ]] && continue
+  echo "$ALL_KNOWN" | tr ' ' '\n' | grep -qx "$name" && continue
+  if [ -d "$dir/.git" ] || [ -d "$dir/.dolt" ]; then
+    ORPHANS+=("$name")
+  fi
+done
+echo "Orphan candidates: ${ORPHANS[*]:-none}"
+```
+
+**3. Escalate if any found:**
+```bash
+if [ ${#ORPHANS[@]} -gt 0 ]; then
+  {{#if dry_run}}
+  echo "DRY-RUN: would escalate orphan dirs: ${ORPHANS[*]}"
+  {{else}}
+  gt escalate -s LOW \
+    "Hygiene patrol: orphan dirs in ~/gt/: ${ORPHANS[*]}" \
+    --reason "Dirs present in ~/gt/ but absent from rigs.json. Human review required before any deletion."
+  {{/if}}
+fi
+```
+
+**Exit criteria:** Audit complete; orphans escalated to Mayor if found."""
+
+[[steps]]
+id = "dolt-orphan-cleanup"
+title = "Clean orphan Dolt test databases"
+needs = ["orphan-repo-audit"]
+description = """
+Remove accumulated test-pollution databases (testdb_*, beads_t*, beads_pt*,
+doctest_*) from the Dolt server. `gt dolt cleanup` handles the safety logic.
+
+**1. Check current orphan count:**
+```bash
+gt dolt status 2>/dev/null
+```
+Note the orphan database count in output. If 0, skip step 2.
+
+**2. Run cleanup:**
+```bash
+{{#if dry_run}}
+echo "DRY-RUN: would run gt dolt cleanup"
+gt dolt status 2>/dev/null
+{{else}}
+gt dolt cleanup
+gt dolt status 2>/dev/null
+{{/if}}
+```
+
+**Exit criteria:** Orphan test databases cleaned (or none found)."""
+
+[[steps]]
+id = "dead-dog-worktree-prune"
+title = "Prune dead dog worktrees"
+needs = ["dolt-orphan-cleanup"]
+description = """
+Remove worktree directories for dogs whose tmux sessions are dead.
+Uses `git worktree remove` which refuses dirty worktrees — safe by design.
+
+**1. Find dog dirs:**
+```bash
+TOWN_ROOT="${GT_TOWN_ROOT:-$(gt town root 2>/dev/null)}"
+DOG_BASE="$TOWN_ROOT/deacon/dogs"
+[ -d "$DOG_BASE" ] || { echo "No dog dir found at $DOG_BASE"; exit 0; }
+```
+
+**2. Check each dog:**
+```bash
+PRUNED=0
+SKIPPED=()
+
+for dogdir in "$DOG_BASE"/*/; do
+  [ -d "$dogdir" ] || continue
+  DOG=$(basename "$dogdir")
+  SESSION="dog-$DOG"
+
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "  LIVE: $DOG — skipping"
+    continue
+  fi
+
+  if git -C "$dogdir" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "  DEAD: $DOG — attempting worktree remove"
+    {{#if dry_run}}
+    echo "  DRY-RUN: would remove worktree $dogdir"
+    {{else}}
+    if git worktree remove "$dogdir" 2>/dev/null; then
+      PRUNED=$((PRUNED + 1))
+      echo "  Pruned: $DOG"
+    else
+      SKIPPED+=("$DOG (worktree remove refused — may be dirty)")
+      echo "  SKIP: $DOG — git worktree remove refused (dirty or locked)"
+    fi
+    {{/if}}
+  else
+    echo "  DEAD non-git dir: $DOG — skipping (manual review needed)"
+    SKIPPED+=("$DOG (non-git dead dir)")
+  fi
+done
+
+echo "Pruned: $PRUNED | Skipped: ${#SKIPPED[@]}"
+```
+
+**Exit criteria:** Dead clean worktrees removed; dirty/locked ones logged."""
+
+[[steps]]
+id = "report"
+title = "Generate summary and create audit bead"
+needs = ["dead-dog-worktree-prune"]
+description = """
+Summarize all actions and create a persistent audit record.
+
+**1. Assemble report from prior step results:**
+```markdown
+## Hygiene Patrol Report
+
+**Run at**: (UTC timestamp)
+**Mode**: (dry-run / live)
+
+| Task                      | Result                         |
+|---------------------------|--------------------------------|
+| Reaper freshness          | OK / dispatched mol-dog-reaper |
+| Persistent zombies found  | (count) / none                 |
+| Orphan dirs detected      | (list) / none                  |
+| Dolt orphan DBs cleaned   | (count)                        |
+| Dead dog worktrees pruned | (count)                        |
+```
+
+**2. Create audit bead:**
+```bash
+bd create "hygiene-patrol: $(date -u +%Y-%m-%d) run complete" \
+  -t chore --ephemeral \
+  -l type:plugin-run,plugin:hygiene-patrol,result:success \
+  -d "<report text>" \
+  --silent 2>/dev/null || true
+```
+
+**3. Escalate if anomalies detected (zombie_count > 3, multiple orphans, errors):**
+```bash
+gt escalate -s MEDIUM "Hygiene patrol: anomalies — see audit bead" \
+  --reason "<summary of anomalies>"
+```
+
+**Exit criteria:** Audit bead created; anomalies escalated."""
+
+[vars]
+[vars.reaper_max_age]
+description = "Hours since last reaper run before re-dispatch (default 12)"
+default = "12"
+
+[vars.stale_hook_age]
+description = "Hours a polecat hook bead must sit stale to trigger escalation (default 6)"
+default = "6"
+
+[vars.dry_run]
+description = "If 'true', report without modifying state"
+default = ""
