@@ -271,6 +271,15 @@ func clearExpiredAt(_ *Manager, state *config.QuotaState, now time.Time) int {
 	return cleared
 }
 
+// ResetTimePassed reports whether a parsed reset time has arrived.
+func ResetTimePassed(resetsAt string, now time.Time) bool {
+	resetTime, err := ParseResetTime(resetsAt, now)
+	if err != nil {
+		return false
+	}
+	return !now.Before(resetTime)
+}
+
 // parseResetTimePattern matches formats like "7pm", "11am", "3:30pm", "7:00pm"
 var parseResetTimePattern = regexp.MustCompile(`(?i)^(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b`)
 

@@ -32,6 +32,11 @@ func TestIsClaudeUsageLimit(t *testing.T) {
 			expect: true,
 		},
 		{
+			name:   "Claude Max extra usage reset message",
+			input:  "You're out of extra usage · resets 5pm (America/Los_Angeles)",
+			expect: true,
+		},
+		{
 			name:   "TUI option to wait for reset",
 			input:  "  > Stop and wait for limit to reset\n",
 			expect: true,

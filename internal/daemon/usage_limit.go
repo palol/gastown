@@ -15,6 +15,7 @@ import "regexp"
 var claudeUsageLimitPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)Claude (AI )?usage limit reached`),
 	regexp.MustCompile(`(?i)You've hit your .*limit`),
+	regexp.MustCompile(`(?i)You're out of extra usage\s*·\s*resets \d`),
 	regexp.MustCompile(`(?i)limit\s*·\s*resets \d`),
 	regexp.MustCompile(`(?i)Stop and wait for limit to reset`),
 	regexp.MustCompile(`(?i)API Error:\s*Rate limit reached`),

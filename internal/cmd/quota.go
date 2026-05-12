@@ -420,6 +420,12 @@ func runQuotaRotate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("planning rotation: %w", err)
 	}
+	expiredResetSessions := expiredResetLimitedSessions(plan.LimitedSessions, time.Now())
+	expiredResetSessionSet := make(map[string]bool, len(expiredResetSessions))
+	for _, r := range expiredResetSessions {
+		expiredResetSessionSet[r.Session] = true
+		delete(plan.Assignments, r.Session)
+	}
 
 	// NOTE: We intentionally do NOT persist scan-detected rate limits here.
 	// Stale sessions (e.g., parked rigs with old rate-limit messages in the
@@ -439,7 +445,7 @@ func runQuotaRotate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if len(plan.Assignments) == 0 {
+	if len(plan.Assignments) == 0 && len(expiredResetSessions) == 0 {
 		if quotaJSON {
 			return json.NewEncoder(os.Stdout).Encode([]quota.RotateResult{})
 		}
@@ -465,13 +471,16 @@ func runQuotaRotate(cmd *cobra.Command, args []string) error {
 	//   2. No available accounts — all accounts are limited or consumed
 	noConfigDir := 0
 	for _, r := range plan.LimitedSessions {
+		if expiredResetSessionSet[r.Session] {
+			continue
+		}
 		if _, assigned := plan.Assignments[r.Session]; !assigned {
 			if r.AccountHandle == "" && r.ConfigDir == "" {
 				noConfigDir++
 			}
 		}
 	}
-	unassignable := len(plan.LimitedSessions) - len(plan.Assignments) - noConfigDir
+	unassignable := len(plan.LimitedSessions) - len(plan.Assignments) - len(expiredResetSessions) - noConfigDir
 
 	// Filter to idle sessions only when --idle is set.
 	// This avoids interrupting agents that are actively working.
@@ -504,6 +513,17 @@ func runQuotaRotate(cmd *cobra.Command, args []string) error {
 	if !quotaJSON {
 		fmt.Println(style.Bold.Render("Rotation Plan"))
 		fmt.Println()
+		for _, r := range expiredResetSessions {
+			account := r.AccountHandle
+			if account == "" {
+				account = "(unknown)"
+			}
+			fmt.Printf(" %s %-25s %s (%s)\n",
+				style.ArrowPrefix, r.Session,
+				style.Success.Render("resume after reset"),
+				style.Dim.Render(account),
+			)
+		}
 		for _, session := range sortedSessions {
 			newAccount := plan.Assignments[session]
 			var oldAccount string
@@ -560,6 +580,18 @@ func runQuotaRotate(cmd *cobra.Command, args []string) error {
 	}
 	swappedConfigDirs := make(map[string]*quota.KeychainCredential)
 	var results []quota.RotateResult
+	for _, r := range expiredResetSessions {
+		result := resumeExpiredLimitSession(t, mgr, r)
+		results = append(results, result)
+
+		if !quotaJSON {
+			if result.Rotated {
+				fmt.Printf(" %s %s resumed after reset\n", style.SuccessPrefix, result.Session)
+			} else if result.Error != "" {
+				fmt.Printf(" %s %s: %s\n", style.ErrorPrefix, result.Session, result.Error)
+			}
+		}
+	}
 	for _, session := range sortedSessions {
 		newAccount := plan.Assignments[session]
 		result := executeKeychainRotation(t, mgr, acctCfg, session, newAccount, swappedConfigDirs)
@@ -588,6 +620,86 @@ func runQuotaRotate(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func expiredResetLimitedSessions(sessions []quota.ScanResult, now time.Time) []quota.ScanResult {
+	var expired []quota.ScanResult
+	for _, r := range sessions {
+		if r.ResetsAt == "" {
+			continue
+		}
+		if quota.ResetTimePassed(r.ResetsAt, now) {
+			expired = append(expired, r)
+		}
+	}
+	return expired
+}
+
+func resumeExpiredLimitSession(t *ttmux.Tmux, mgr *quota.Manager, r quota.ScanResult) quota.RotateResult {
+	result := quota.RotateResult{
+		Session:    r.Session,
+		OldAccount: r.AccountHandle,
+		NewAccount: r.AccountHandle,
+	}
+
+	configDir := strings.TrimSpace(r.ConfigDir)
+	if configDir == "" {
+		var err error
+		configDir, err = t.GetEnvironment(r.Session, "CLAUDE_CONFIG_DIR")
+		if err != nil || strings.TrimSpace(configDir) == "" {
+			home, homeErr := os.UserHomeDir()
+			if homeErr != nil {
+				result.Error = fmt.Sprintf("reading CLAUDE_CONFIG_DIR: %v", err)
+				return result
+			}
+			configDir = home + "/.claude"
+		}
+	}
+
+	restartCmd, err := buildRestartCommandWithOpts(r.Session, buildRestartCommandOpts{
+		ContinueSession: true,
+	})
+	if err != nil {
+		result.Error = fmt.Sprintf("building restart command: %v", err)
+		return result
+	}
+
+	env := map[string]string{"CLAUDE_CONFIG_DIR": configDir}
+	if r.AccountHandle != "" {
+		env["GT_QUOTA_ACCOUNT"] = r.AccountHandle
+	}
+	restartCmd = config.PrependEnv(restartCmd, env)
+
+	pane, err := t.GetPaneID(r.Session)
+	if err != nil {
+		result.Error = fmt.Sprintf("getting pane: %v", err)
+		return result
+	}
+	if err := t.SetRemainOnExit(pane, true); err != nil {
+		style.PrintWarning("could not set remain-on-exit for %s: %v", r.Session, err)
+	}
+	if err := t.KillPaneProcesses(pane); err != nil {
+		style.PrintWarning("could not kill pane processes for %s: %v", r.Session, err)
+	}
+	if err := t.ClearHistory(pane); err != nil {
+		style.PrintWarning("could not clear history for %s: %v", r.Session, err)
+	}
+	if err := t.RespawnPane(pane, restartCmd); err != nil {
+		result.Error = fmt.Sprintf("respawning pane: %v", err)
+		return result
+	}
+	if r.AccountHandle != "" {
+		if err := t.SetEnvironment(r.Session, "GT_QUOTA_ACCOUNT", r.AccountHandle); err != nil {
+			style.PrintWarning("could not set GT_QUOTA_ACCOUNT for %s: %v", r.Session, err)
+		}
+		if err := mgr.MarkAvailable(r.AccountHandle); err != nil {
+			style.PrintWarning("could not clear quota state for %s: %v", r.AccountHandle, err)
+		}
+	}
+
+	result.ResumedSession = "reset"
+	result.Rotated = true
+	return result
 }
 
 var quotaClearCmd = &cobra.Command{
@@ -800,8 +912,6 @@ func executeKeychainRotation(
 	result.Rotated = true
 	return result
 }
-
-
 
 // Watch command flags
 var (

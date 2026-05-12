@@ -81,7 +81,7 @@ func TestScanAll_DetectsRateLimited(t *testing.T) {
 		sessions: []string{"hq-mayor", "gt-crew-bear", "gt-witness", "some-other"},
 		paneContent: map[string]string{
 			"hq-mayor": `❯ /rate-limit-options
-  ⎿  You've hit your limit · resets 7pm (America/Los_Angeles)
+	  ⎿  You're out of extra usage · resets 7pm (America/Los_Angeles)
 
 ❯ 📬 You have new mail from laser/witness.`,
 			"gt-crew-bear": `⏺ Working on implementing quota scan...
@@ -347,6 +347,10 @@ func TestParseResetTime(t *testing.T) {
 		expected string
 	}{
 		{
+			input:    "You're out of extra usage · resets 5pm (America/Los_Angeles)",
+			expected: "5pm (America/Los_Angeles)",
+		},
+		{
 			input:    "You've hit your limit · resets 7pm (America/Los_Angeles)",
 			expected: "7pm (America/Los_Angeles)",
 		},
@@ -389,10 +393,10 @@ func TestIsGasTownSession(t *testing.T) {
 		{"gt-crew-bear", true},
 		{"gt-witness", true},
 		{"bd-refinery", true},
-		{"my-app", false},       // has dash but not a known prefix
-		{"dev-server", false},   // has dash but not a known prefix
-		{"myapp", false},        // no dash, no known prefix
-		{"devserver", false},    // no dash, no known prefix
+		{"my-app", false},     // has dash but not a known prefix
+		{"dev-server", false}, // has dash but not a known prefix
+		{"myapp", false},      // no dash, no known prefix
+		{"devserver", false},  // no dash, no known prefix
 	}
 
 	for _, tt := range tests {

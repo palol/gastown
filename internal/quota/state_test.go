@@ -607,3 +607,18 @@ func TestClearExpired_NoResetsAt(t *testing.T) {
 		t.Errorf("expected no_reset to remain limited")
 	}
 }
+
+func TestResetTimePassed(t *testing.T) {
+	la, _ := time.LoadLocation("America/Los_Angeles")
+	now := time.Date(2026, 2, 18, 15, 0, 0, 0, la)
+
+	if !ResetTimePassed("11am (America/Los_Angeles)", now) {
+		t.Error("expected 11am reset to have passed by 3pm")
+	}
+	if ResetTimePassed("7pm (America/Los_Angeles)", now) {
+		t.Error("expected 7pm reset not to have passed by 3pm")
+	}
+	if ResetTimePassed("not a time", now) {
+		t.Error("expected invalid reset time not to pass")
+	}
+}
