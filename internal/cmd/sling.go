@@ -951,8 +951,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		return fmt.Errorf("serializing hook write for %s: %w", targetAgent, assigneeLockErr)
 	}
 	defer assigneeUnlock()
-	hookDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
-	if err := hookBeadWithRetry(beadID, targetAgent, hookDir); err != nil {
+	if err := hookBeadWithRetry(beadID, targetAgent); err != nil {
 		return err
 	}
 

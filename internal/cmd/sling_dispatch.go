@@ -329,8 +329,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		return result, fmt.Errorf("serializing hook write for %s: %w", targetAgent, assigneeLockErr)
 	}
 	defer assigneeUnlock()
-	hookDir := beads.ResolveHookDir(townRoot, beadToHook, hookWorkDir)
-	if err := hookBeadWithRetry(beadToHook, targetAgent, hookDir); err != nil {
+	if err := hookBeadWithRetry(beadToHook, targetAgent); err != nil {
 		// Clean up orphaned polecat to avoid leaving spawned-but-unhookable polecats
 		cleanupSpawnedPolecat(spawnInfo, params.RigName, convoyID)
 		result.ErrMsg = "hook failed"

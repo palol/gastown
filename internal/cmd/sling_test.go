@@ -376,7 +376,7 @@ exit /b 0
 		t.Fatalf("chdir: %v", err)
 	}
 
-	if err := hookBeadWithRetry("gt-wisp-xyz", "deacon", townRoot); err != nil {
+	if err := hookBeadWithRetry("gt-wisp-xyz", "deacon"); err != nil {
 		t.Fatalf("hookBeadWithRetry: %v", err)
 	}
 
