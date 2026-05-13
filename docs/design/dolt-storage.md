@@ -45,10 +45,31 @@ translates its variables to bd's equivalents when spawning agents.
 | `GT_DOLT_PORT` | `BEADS_DOLT_PORT` | Server port (default: `3307`) |
 
 **Remote Dolt servers**: If Dolt runs on a different machine (e.g., over
-Tailscale), set `GT_DOLT_HOST` in the environment. gt propagates this as
-`BEADS_DOLT_SERVER_HOST` to all bd subprocesses, overriding bd's hardcoded
-`127.0.0.1` default. Without this, every new rig/worktree/polecat silently
-connects to localhost and fails.
+Tailscale), configure the host in `mayor/daemon.json` so the daemon and spawned
+agents all use the same connection target. `GT_DOLT_HOST` is useful as a shell
+override; gt propagates it as `BEADS_DOLT_SERVER_HOST` to bd subprocesses,
+overriding bd's hardcoded `127.0.0.1` default. Without either setting, every new
+rig/worktree/polecat silently connects to localhost and fails.
+
+Persistent remote-host configuration lives under `patrols.dolt_server`:
+
+```json
+{
+  "patrols": {
+    "dolt_server": {
+      "enabled": true,
+      "external": true,
+      "host": "100.111.197.110",
+      "port": 3307
+    }
+  }
+}
+```
+
+Use the remote machine's reachable address for `host` (for example, a Tailscale
+IP). Do not use `0.0.0.0` here; that is a server bind address, not a client
+connection address. `gt doctor` warns when `GT_DOLT_HOST` points at a remote
+server but `mayor/daemon.json` does not persist the same host.
 
 Per-workspace override: set `dolt.host` in a rig's `.beads/config.yaml`.
 This takes priority over the env var for that specific workspace.
