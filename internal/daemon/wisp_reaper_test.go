@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -71,5 +73,46 @@ func TestDefaultReaperIntervalIsOneHour(t *testing.T) {
 	// Verify the default changed from 30m to 1h per issue gt-caf7.
 	if defaultWispReaperInterval != 1*time.Hour {
 		t.Errorf("expected default interval 1h, got %v", defaultWispReaperInterval)
+	}
+}
+
+func TestDoltServerPortFallsBackToTownConfig(t *testing.T) {
+	townRoot := t.TempDir()
+	doltDataDir := filepath.Join(townRoot, ".dolt-data")
+	if err := os.MkdirAll(doltDataDir, 0755); err != nil {
+		t.Fatalf("create .dolt-data: %v", err)
+	}
+	configYAML := []byte("listener:\n  host: 127.0.0.1\n  port: 21307\n")
+	if err := os.WriteFile(filepath.Join(doltDataDir, "config.yaml"), configYAML, 0644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	d := &Daemon{config: &Config{TownRoot: townRoot}}
+	if got := d.doltServerPort(); got != 21307 {
+		t.Errorf("doltServerPort() = %d, want 21307", got)
+	}
+}
+
+func TestDoltServerPortFallsBackToEnv(t *testing.T) {
+	t.Setenv("GT_DOLT_PORT", "21307")
+	d := &Daemon{}
+	if got := d.doltServerPort(); got != 21307 {
+		t.Errorf("doltServerPort() = %d, want 21307", got)
+	}
+}
+
+func TestDoltServerPortFallsBackToBeadsPortFile(t *testing.T) {
+	townRoot := t.TempDir()
+	beadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("create .beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "dolt-server.port"), []byte("21307\n"), 0644); err != nil {
+		t.Fatalf("write dolt-server.port: %v", err)
+	}
+
+	d := &Daemon{config: &Config{TownRoot: townRoot}}
+	if got := d.doltServerPort(); got != 21307 {
+		t.Errorf("doltServerPort() = %d, want 21307", got)
 	}
 }

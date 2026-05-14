@@ -2,11 +2,15 @@ package daemon
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/reaper"
 	"github.com/steveyegge/gastown/internal/util"
 )
@@ -329,8 +333,40 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 
 // doltServerPort returns the configured Dolt server port.
 func (d *Daemon) doltServerPort() int {
-	if d.doltServer != nil {
+	if d != nil && d.doltServer != nil && d.doltServer.config != nil && d.doltServer.config.Port > 0 {
 		return d.doltServer.config.Port
+	}
+	var townRoot string
+	var configPort int
+	if d != nil && d.config != nil && d.config.TownRoot != "" {
+		townRoot = d.config.TownRoot
+		configPort = doltserver.DefaultConfig(townRoot).Port
+		if _, err := os.Stat(filepath.Join(townRoot, ".dolt-data", "config.yaml")); err == nil && configPort > 0 {
+			return configPort
+		}
+		if configPort > 0 && configPort != doltserver.DefaultPort {
+			return configPort
+		}
+	}
+	for _, key := range []string{"GT_DOLT_PORT", "BEADS_DOLT_PORT", "BEADS_DOLT_SERVER_PORT"} {
+		if port, err := strconv.Atoi(os.Getenv(key)); err == nil && port > 0 {
+			return port
+		}
+	}
+	if townRoot != "" {
+		for _, path := range []string{
+			filepath.Join(townRoot, ".beads", "dolt-server.port"),
+			filepath.Join(townRoot, ".dolt-data", ".beads", "dolt-server.port"),
+		} {
+			if data, err := os.ReadFile(path); err == nil {
+				if port, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && port > 0 {
+					return port
+				}
+			}
+		}
+		if configPort > 0 {
+			return configPort
+		}
 	}
 	return 3307
 }
