@@ -1,5 +1,8 @@
 # Agent Instructions
 
+Read and follow shared coding behavior contract first:
+`/Users/paolo/brain/Work/_META/coding-agent-contract.md`
+
 See **CLAUDE.md** for complete agent context and instructions.
 
 This file exists for compatibility with tools that look for AGENTS.md.
