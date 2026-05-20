@@ -23,21 +23,21 @@ type SlingParams struct {
 	RigName     string // Target rig (always a rig for queue)
 
 	// CLI flag passthrough
-	Args         string   // --args
-	Vars         []string // --var (key=value pairs)
-	Merge        string   // --merge (convoy strategy)
-	BaseBranch   string   // --base-branch
-	ResumeBranch string   // --branch / --pr (resume existing PR branch, gh#3602)
-	Account      string   // --account
-	Agent        string   // --agent
-	NoConvoy     bool     // --no-convoy
-	Owned        bool     // --owned
-	NoMerge      bool     // --no-merge
-	Force        bool     // --force
-	HookRawBead  bool     // --hook-raw-bead
-	NoBoot       bool     // --no-boot
-	Mode         string   // --ralph: "" (normal) or "ralph"
-	ReviewOnly   bool     // --review-only: review and report back only, no merge/commit/push
+	Args          string   // --args
+	Vars          []string // --var (key=value pairs)
+	Merge         string   // --merge (convoy strategy)
+	BaseBranch    string   // --base-branch
+	Account       string   // --account
+	Agent         string   // --agent
+	NoConvoy      bool     // --no-convoy
+	Owned         bool     // --owned
+	NoMerge       bool     // --no-merge
+	Force         bool     // --force
+	HookRawBead   bool     // --hook-raw-bead
+	NoBoot        bool     // --no-boot
+	Mode          string   // --ralph: "" (normal) or "ralph"
+	ReviewOnly    bool     // --review-only: review and report back only, no merge/commit/push
+	ComputeTarget string   // --compute-target: auto/local/bigfoot
 
 	// Execution behavior (set by caller, not serialized to queue)
 	SkipCook         bool   // Batch optimization: formula already cooked
@@ -51,6 +51,7 @@ type SlingParams struct {
 type SlingResult struct {
 	BeadID           string
 	PolecatName      string
+	RoutedRig        string
 	SpawnInfo        *SpawnedPolecatInfo
 	Success          bool
 	ErrMsg           string
@@ -113,6 +114,24 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		BeadID: params.BeadID,
 	}
 
+	// 1. Get bead info + status check
+	info, err := getBeadInfo(params.BeadID)
+	if err != nil {
+		result.ErrMsg = err.Error()
+		return result, fmt.Errorf("could not get bead info: %w", err)
+	}
+	normalizedComputeTarget := params.ComputeTarget
+	if normalizedComputeTarget == "" {
+		normalizedComputeTarget = computeTargetAuto
+	}
+	effectiveComputeTarget := resolveComputeTarget(normalizedComputeTarget, info.Labels)
+	routedRig := targetRigForCompute(params.RigName, effectiveComputeTarget)
+	if routedRig != params.RigName {
+		fmt.Printf("  %s compute route: %s -> %s (%s)\n", style.Bold.Render("→"), params.RigName, routedRig, effectiveComputeTarget)
+		params.RigName = routedRig
+	}
+	result.RoutedRig = params.RigName
+
 	// 0. Check if rig is parked or docked before dispatching (gt-4owfd.1, gt-11y)
 	if params.RigName != "" {
 		if blocked, reason := IsRigParkedOrDocked(townRoot, params.RigName); blocked {
@@ -123,13 +142,6 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 			}
 			return result, fmt.Errorf("cannot sling to %s rig %q\n%s %s", reason, params.RigName, undoCmd, params.RigName)
 		}
-	}
-
-	// 1. Get bead info + status check
-	info, err := getBeadInfo(params.BeadID)
-	if err != nil {
-		result.ErrMsg = err.Error()
-		return result, fmt.Errorf("could not get bead info: %w", err)
 	}
 
 	// Guard against dispatching closed/tombstone beads (defense-in-depth).
@@ -163,13 +175,6 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	if isDeferredBead(info) && !explicitForce {
 		result.ErrMsg = "deferred"
 		return result, fmt.Errorf("bead %s is deferred (use --force to override)", params.BeadID)
-	}
-
-	if params.RigName != "" {
-		if err := verifyBeadExistsInTargetRigDatabase(params.BeadID, params.RigName, townRoot); err != nil {
-			result.ErrMsg = err.Error()
-			return result, err
-		}
 	}
 
 	// Send LIFECYCLE:Shutdown to the witness when force-stealing a bead from a
@@ -230,12 +235,11 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 
 	// 3. Spawn polecat (via spawnPolecatForSling)
 	spawnOpts := SlingSpawnOptions{
-		Force:        params.Force,
-		Account:      params.Account,
-		HookBead:     params.BeadID,
-		Agent:        params.Agent,
-		BaseBranch:   params.BaseBranch,
-		ResumeBranch: params.ResumeBranch,
+		Force:      params.Force,
+		Account:    params.Account,
+		HookBead:   params.BeadID,
+		Agent:      params.Agent,
+		BaseBranch: params.BaseBranch,
 		// Create is always true for rig targets: executeSling only handles
 		// rig-targeted dispatch (batch sling + queue dispatch), where a fresh
 		// polecat must be spawned. The single-sling path (runSling) handles
@@ -365,6 +369,12 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		Mode:             params.Mode,
 		FormulaVars:      strings.Join(allVars, "\n"),
 	}
+	dispatchRunID, routedHost, dispatchStartedAt, resourceClass := buildDispatchAudit(effectiveComputeTarget)
+	fieldUpdates.ComputeTarget = effectiveComputeTarget
+	fieldUpdates.DispatchRunID = dispatchRunID
+	fieldUpdates.RoutedHost = routedHost
+	fieldUpdates.DispatchStartedAt = dispatchStartedAt
+	fieldUpdates.ResourceClass = resourceClass
 	// Use beadToHook for the update target (may differ from beadID when formula-on-bead)
 	if err := storeFieldsInBead(beadToHook, fieldUpdates); err != nil {
 		fmt.Printf("  %s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), err)

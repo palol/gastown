@@ -164,18 +164,19 @@ func TestNoRetryPolicy(t *testing.T) {
 
 func TestReconstructFromContext(t *testing.T) {
 	ctx := &SlingContextFields{
-		WorkBeadID:  "bead-123",
-		TargetRig:   "prod-rig",
-		Formula:     "mol-polecat-work",
-		Args:        "do stuff",
-		Vars:        "x=1\ny=2",
-		Merge:       "mr",
-		BaseBranch:  "main",
-		Account:     "acme",
-		Agent:       "codex",
-		Mode:        "ralph",
-		NoMerge:     true,
-		HookRawBead: true,
+		WorkBeadID:    "bead-123",
+		TargetRig:     "prod-rig",
+		Formula:       "mol-polecat-work",
+		Args:          "do stuff",
+		Vars:          "x=1\ny=2",
+		Merge:         "mr",
+		BaseBranch:    "main",
+		Account:       "acme",
+		Agent:         "codex",
+		Mode:          "ralph",
+		NoMerge:       true,
+		ComputeTarget: "bigfoot",
+		HookRawBead:   true,
 	}
 
 	params := ReconstructFromContext(ctx)
@@ -212,6 +213,9 @@ func TestReconstructFromContext(t *testing.T) {
 	}
 	if !params.NoMerge {
 		t.Error("NoMerge: expected true")
+	}
+	if params.ComputeTarget != "bigfoot" {
+		t.Errorf("ComputeTarget: got %q, want %q", params.ComputeTarget, "bigfoot")
 	}
 	if !params.HookRawBead {
 		t.Error("HookRawBead: expected true")

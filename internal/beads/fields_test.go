@@ -689,3 +689,35 @@ func TestSetConvoyFieldsPreservesWatchers(t *testing.T) {
 		t.Errorf("lost prose, got:\n%s", got)
 	}
 }
+
+func TestAttachmentFieldsDispatchAuditRoundTrip(t *testing.T) {
+	original := &AttachmentFields{
+		DispatchedBy:      "mayor/",
+		ComputeTarget:     "bigfoot",
+		DispatchRunID:     "run-123",
+		RoutedHost:        "bigfoot",
+		DispatchStartedAt: "2026-05-20T12:34:56Z",
+		ResourceClass:     "burst",
+	}
+
+	formatted := FormatAttachmentFields(original)
+	parsed := ParseAttachmentFields(&Issue{Description: formatted})
+	if parsed == nil {
+		t.Fatal("round-trip parse returned nil")
+	}
+	if parsed.ComputeTarget != original.ComputeTarget {
+		t.Errorf("ComputeTarget = %q, want %q", parsed.ComputeTarget, original.ComputeTarget)
+	}
+	if parsed.DispatchRunID != original.DispatchRunID {
+		t.Errorf("DispatchRunID = %q, want %q", parsed.DispatchRunID, original.DispatchRunID)
+	}
+	if parsed.RoutedHost != original.RoutedHost {
+		t.Errorf("RoutedHost = %q, want %q", parsed.RoutedHost, original.RoutedHost)
+	}
+	if parsed.DispatchStartedAt != original.DispatchStartedAt {
+		t.Errorf("DispatchStartedAt = %q, want %q", parsed.DispatchStartedAt, original.DispatchStartedAt)
+	}
+	if parsed.ResourceClass != original.ResourceClass {
+		t.Errorf("ResourceClass = %q, want %q", parsed.ResourceClass, original.ResourceClass)
+	}
+}

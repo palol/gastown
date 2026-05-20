@@ -114,6 +114,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 	type batchResult struct {
 		beadID  string
 		polecat string
+		rig     string
 		success bool
 		errMsg  string
 	}
@@ -165,6 +166,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			HookRawBead:      slingHookRawBead,
 			NoBoot:           slingNoBoot,
 			Mode:             slingMode,
+			ComputeTarget:    slingComputeTarget,
 			SkipCook:         formulaCooked,
 			FormulaFailFatal: false, // Batch: warn + hook raw on formula failure
 			CallerContext:    "batch-sling",
@@ -185,13 +187,17 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			if result != nil {
 				polecatName = result.PolecatName
 			}
-			results = append(results, batchResult{beadID: beadID, polecat: polecatName, success: false, errMsg: errMsg})
+			results = append(results, batchResult{beadID: beadID, polecat: polecatName, rig: rigName, success: false, errMsg: errMsg})
 			fmt.Printf("  %s %s\n", style.Dim.Render("✗"), errMsg)
 			continue
 		}
 
 		activeCount++
-		results = append(results, batchResult{beadID: beadID, polecat: result.PolecatName, success: true})
+		routedRig := result.RoutedRig
+		if routedRig == "" {
+			routedRig = rigName
+		}
+		results = append(results, batchResult{beadID: beadID, polecat: result.PolecatName, rig: routedRig, success: true})
 
 		// Delay between spawns to prevent Dolt lock contention — sequential
 		// spawns without delay cause database lock timeouts when multiple bd
@@ -202,7 +208,14 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 	}
 
 	if !slingNoBoot {
-		wakeRigAgents(rigName)
+		woken := make(map[string]bool)
+		for _, r := range results {
+			if !r.success || r.rig == "" || woken[r.rig] {
+				continue
+			}
+			woken[r.rig] = true
+			wakeRigAgents(r.rig)
+		}
 	}
 
 	// Print summary

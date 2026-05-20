@@ -46,22 +46,22 @@ func shouldDeferDispatch() (bool, error) {
 
 // ScheduleOptions holds options for scheduling a bead.
 type ScheduleOptions struct {
-	Formula      string   // Formula to apply at dispatch time (e.g., "mol-polecat-work")
-	Args         string   // Natural language args for executor
-	Vars         []string // Formula variables (key=value)
-	Merge        string   // Merge strategy: direct/mr/local
-	BaseBranch   string   // Override base branch for polecat worktree
-	ResumeBranch string   // Resume an existing branch (gh#3602); mutually exclusive with BaseBranch
-	NoConvoy     bool     // Skip auto-convoy creation
-	Owned        bool     // Mark auto-convoy as caller-managed lifecycle
-	DryRun       bool     // Show what would be done without acting
-	Force        bool     // Force schedule even if bead is hooked/in_progress
-	NoMerge      bool     // Skip merge queue on completion
-	ReviewOnly   bool     // Review-only mode: assignee evaluates and reports back, no merge/commit/push
-	Account      string   // Claude Code account handle
-	Agent        string   // Agent override (e.g., "gemini", "codex")
-	HookRawBead  bool     // Hook raw bead without default formula
-	Ralph        bool     // Ralph Wiggum loop mode
+	Formula       string   // Formula to apply at dispatch time (e.g., "mol-polecat-work")
+	Args          string   // Natural language args for executor
+	Vars          []string // Formula variables (key=value)
+	Merge         string   // Merge strategy: direct/mr/local
+	BaseBranch    string   // Override base branch for polecat worktree
+	NoConvoy      bool     // Skip auto-convoy creation
+	Owned         bool     // Mark auto-convoy as caller-managed lifecycle
+	DryRun        bool     // Show what would be done without acting
+	Force         bool     // Force schedule even if bead is hooked/in_progress
+	NoMerge       bool     // Skip merge queue on completion
+	ReviewOnly    bool     // Review-only mode: assignee evaluates and reports back, no merge/commit/push
+	Account       string   // Claude Code account handle
+	Agent         string   // Agent override (e.g., "gemini", "codex")
+	HookRawBead   bool     // Hook raw bead without default formula
+	Ralph         bool     // Ralph Wiggum loop mode
+	ComputeTarget string   // Compute routing target: auto/local/bigfoot
 }
 
 // scheduleBead schedules a bead for deferred dispatch via the capacity scheduler.
@@ -78,9 +78,6 @@ func scheduleBead(beadID, rigName string, opts ScheduleOptions) error {
 
 	if _, isRig := IsRigName(rigName); !isRig {
 		return fmt.Errorf("'%s' is not a known rig", rigName)
-	}
-	if err := verifyBeadExistsInTargetRigDatabase(beadID, rigName, townRoot); err != nil {
-		return err
 	}
 
 	if !opts.Force {
@@ -156,6 +153,9 @@ func scheduleBead(beadID, rigName string, opts ScheduleOptions) error {
 		TargetRig:  rigName,
 		EnqueuedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+	if opts.ComputeTarget != "" {
+		fields.ComputeTarget = opts.ComputeTarget
+	}
 	if opts.Formula != "" {
 		fields.Formula = opts.Formula
 	}
@@ -170,9 +170,6 @@ func scheduleBead(beadID, rigName string, opts ScheduleOptions) error {
 	}
 	if opts.BaseBranch != "" {
 		fields.BaseBranch = opts.BaseBranch
-	}
-	if opts.ResumeBranch != "" {
-		fields.ResumeBranch = opts.ResumeBranch
 	}
 	fields.NoMerge = opts.NoMerge
 	fields.ReviewOnly = opts.ReviewOnly
@@ -239,21 +236,21 @@ func runBatchSchedule(beadIDs []string, rigName, townRoot string) error {
 	for _, beadID := range beadIDs {
 		formula := resolveFormula(slingFormula, slingHookRawBead, townRoot, rigName)
 		err := scheduleBead(beadID, rigName, ScheduleOptions{
-			Formula:      formula,
-			Args:         slingArgs,
-			Vars:         slingVars,
-			NoConvoy:     slingNoConvoy,
-			Owned:        slingOwned,
-			Merge:        slingMerge,
-			BaseBranch:   slingBaseBranch,
-			ResumeBranch: slingResumeBranch,
-			DryRun:       false,
-			Force:        slingForce,
-			NoMerge:      slingNoMerge,
-			Account:      slingAccount,
-			Agent:        slingAgent,
-			HookRawBead:  slingHookRawBead,
-			Ralph:        slingRalph,
+			Formula:       formula,
+			Args:          slingArgs,
+			Vars:          slingVars,
+			NoConvoy:      slingNoConvoy,
+			Owned:         slingOwned,
+			Merge:         slingMerge,
+			BaseBranch:    slingBaseBranch,
+			DryRun:        false,
+			Force:         slingForce,
+			NoMerge:       slingNoMerge,
+			Account:       slingAccount,
+			Agent:         slingAgent,
+			HookRawBead:   slingHookRawBead,
+			Ralph:         slingRalph,
+			ComputeTarget: slingComputeTarget,
 		})
 		if err != nil {
 			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), beadID, err)

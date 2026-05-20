@@ -1,0 +1,32 @@
+sync:
+  gt_source_to_bigfoot:
+    alpha: "."
+    beta: "ssh://bigfoot/~/gt-burst/workspace"
+    mode: "one-way-safe"
+    ignore:
+      vcs: true
+      paths:
+        - ".beads"
+        - "**/.beads"
+        - ".dolt-data"
+        - "**/.dolt"
+        - "**/.dolt-data"
+        - "**/secrets"
+        - "**/.env"
+        - "**/*.checkpoint"
+        - "**/datasets"
+        - "**/checkpoints"
+        - "**/blobs"
+
+  gt_runs_back_to_laptop:
+    alpha: "ssh://bigfoot/~/gt-burst/runs"
+    beta: "./var/bigfoot-runs"
+    mode: "one-way-safe"
+    ignore:
+      vcs: true
+      paths:
+        - "**/*"
+        - "!*/"
+        - "!**/manifest.json"
+        - "!**/summary.md"
+        - "!**/patch.diff"

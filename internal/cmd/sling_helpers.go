@@ -374,18 +374,23 @@ func getBeadInfo(beadID string) (*beadInfo, error) {
 // This enables a single read-modify-write cycle instead of sequential independent updates,
 // eliminating the race condition where concurrent writers could overwrite each other's fields.
 type beadFieldUpdates struct {
-	Dispatcher       string   // Agent that dispatched the work
-	Args             string   // Natural language instructions
-	Vars             []string // Formula variables (key=value pairs)
-	AttachedMolecule string   // Wisp root ID
-	AttachedFormula  string   // Formula name (e.g., "mol-polecat-work") for inline step display
-	NoMerge          bool     // Skip merge queue on completion
-	ReviewOnly       bool     // Review-only mode: assignee must not merge/commit/push
-	Mode             string   // Execution mode: "" (normal) or "ralph"
-	ConvoyID         string   // Convoy bead ID (e.g., "hq-cv-abc")
-	MergeStrategy    string   // Convoy merge strategy: "direct", "mr", "local"
-	ConvoyOwned      bool     // Convoy has gt:owned label (caller-managed lifecycle)
-	FormulaVars      string   // Newline-separated key=value pairs for formula template substitution
+	Dispatcher        string   // Agent that dispatched the work
+	Args              string   // Natural language instructions
+	Vars              []string // Formula variables (key=value pairs)
+	AttachedMolecule  string   // Wisp root ID
+	AttachedFormula   string   // Formula name (e.g., "mol-polecat-work") for inline step display
+	ComputeTarget     string   // Compute route used for this dispatch
+	DispatchRunID     string   // Immutable dispatch run identifier
+	RoutedHost        string   // Immutable routed host
+	DispatchStartedAt string   // Immutable dispatch start timestamp
+	ResourceClass     string   // Immutable resource class
+	NoMerge           bool     // Skip merge queue on completion
+	ReviewOnly        bool     // Review-only mode: assignee must not merge/commit/push
+	Mode              string   // Execution mode: "" (normal) or "ralph"
+	ConvoyID          string   // Convoy bead ID (e.g., "hq-cv-abc")
+	MergeStrategy     string   // Convoy merge strategy: "direct", "mr", "local"
+	ConvoyOwned       bool     // Convoy has gt:owned label (caller-managed lifecycle)
+	FormulaVars       string   // Newline-separated key=value pairs for formula template substitution
 }
 
 func buildSlingFieldUpdates(
@@ -457,6 +462,21 @@ func storeFieldsInBead(beadID string, updates beadFieldUpdates) error {
 	// Apply all updates in one pass
 	if updates.Dispatcher != "" {
 		fields.DispatchedBy = updates.Dispatcher
+	}
+	if updates.ComputeTarget != "" {
+		fields.ComputeTarget = updates.ComputeTarget
+	}
+	if updates.DispatchRunID != "" && fields.DispatchRunID == "" {
+		fields.DispatchRunID = updates.DispatchRunID
+	}
+	if updates.RoutedHost != "" && fields.RoutedHost == "" {
+		fields.RoutedHost = updates.RoutedHost
+	}
+	if updates.DispatchStartedAt != "" && fields.DispatchStartedAt == "" {
+		fields.DispatchStartedAt = updates.DispatchStartedAt
+	}
+	if updates.ResourceClass != "" && fields.ResourceClass == "" {
+		fields.ResourceClass = updates.ResourceClass
 	}
 	if updates.Args != "" {
 		fields.AttachedArgs = updates.Args

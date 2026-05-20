@@ -4,8 +4,8 @@ import "strings"
 
 // PendingBead represents a bead that is scheduled and ready for dispatch evaluation.
 type PendingBead struct {
-	ID          string             // Context bead ID (sling context)
-	WorkBeadID  string             // The actual work bead ID
+	ID          string // Context bead ID (sling context)
+	WorkBeadID  string // The actual work bead ID
 	Title       string
 	TargetRig   string
 	Description string
@@ -26,9 +26,9 @@ type SlingContextFields struct {
 	Merge            string `json:"merge,omitempty"`
 	Convoy           string `json:"convoy,omitempty"`
 	BaseBranch       string `json:"base_branch,omitempty"`
-	ResumeBranch     string `json:"resume_branch,omitempty"`
 	NoMerge          bool   `json:"no_merge,omitempty"`
 	ReviewOnly       bool   `json:"review_only,omitempty"`
+	ComputeTarget    string `json:"compute_target,omitempty"`
 	Account          string `json:"account,omitempty"`
 	Agent            string `json:"agent,omitempty"`
 	HookRawBead      bool   `json:"hook_raw_bead,omitempty"`
@@ -212,38 +212,38 @@ func FilterCircuitBroken(beads []PendingBead, maxFailures int) ([]PendingBead, i
 // DispatchParams captures what the scheduler needs to tell the dispatcher.
 // Mirrors the relevant fields from cmd.SlingParams but is scheduler-owned.
 type DispatchParams struct {
-	BeadID       string
-	FormulaName  string
-	RigName      string
-	Args         string
-	Vars         []string
-	Merge        string
-	BaseBranch   string
-	ResumeBranch string
-	Account      string
-	Agent        string
-	Mode         string
-	NoMerge      bool
-	ReviewOnly   bool
-	HookRawBead  bool
+	BeadID        string
+	FormulaName   string
+	RigName       string
+	Args          string
+	Vars          []string
+	Merge         string
+	BaseBranch    string
+	Account       string
+	Agent         string
+	Mode          string
+	NoMerge       bool
+	ReviewOnly    bool
+	ComputeTarget string
+	HookRawBead   bool
 }
 
 // ReconstructFromContext builds DispatchParams from sling context fields.
 func ReconstructFromContext(ctx *SlingContextFields) DispatchParams {
 	p := DispatchParams{
-		BeadID:       ctx.WorkBeadID,
-		RigName:      ctx.TargetRig,
-		FormulaName:  ctx.Formula,
-		Args:         ctx.Args,
-		Merge:        ctx.Merge,
-		BaseBranch:   ctx.BaseBranch,
-		ResumeBranch: ctx.ResumeBranch,
-		Account:      ctx.Account,
-		Agent:        ctx.Agent,
-		Mode:         ctx.Mode,
-		NoMerge:      ctx.NoMerge,
-		ReviewOnly:   ctx.ReviewOnly,
-		HookRawBead:  ctx.HookRawBead,
+		BeadID:        ctx.WorkBeadID,
+		RigName:       ctx.TargetRig,
+		FormulaName:   ctx.Formula,
+		Args:          ctx.Args,
+		Merge:         ctx.Merge,
+		BaseBranch:    ctx.BaseBranch,
+		Account:       ctx.Account,
+		Agent:         ctx.Agent,
+		Mode:          ctx.Mode,
+		NoMerge:       ctx.NoMerge,
+		ReviewOnly:    ctx.ReviewOnly,
+		ComputeTarget: ctx.ComputeTarget,
+		HookRawBead:   ctx.HookRawBead,
 	}
 	if ctx.Vars != "" {
 		p.Vars = splitVars(ctx.Vars)
