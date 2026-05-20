@@ -153,6 +153,9 @@ func scheduleBead(beadID, rigName string, opts ScheduleOptions) error {
 		TargetRig:  rigName,
 		EnqueuedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+	if err := capacity.AdvanceRunState(fields, capacity.RunStateQueued, time.Now().UTC()); err != nil {
+		return fmt.Errorf("initializing run state: %w", err)
+	}
 	if opts.ComputeTarget != "" {
 		fields.ComputeTarget = opts.ComputeTarget
 	}

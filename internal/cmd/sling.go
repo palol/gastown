@@ -196,6 +196,9 @@ func runSlingRespawnReset(_ *cobra.Command, args []string) error {
 }
 
 func runSling(cmd *cobra.Command, args []string) (retErr error) {
+	if err := requireLocalControlPlane("gt sling"); err != nil {
+		return err
+	}
 	ctx := context.Background()
 	if cmd != nil {
 		ctx = cmd.Context()

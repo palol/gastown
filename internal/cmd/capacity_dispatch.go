@@ -73,6 +73,11 @@ var fireCrossRigEscalation = func(rig, prefix, beadID string) {
 // before a sling context is closed as circuit-broken.
 const maxDispatchFailures = 3
 
+const (
+	runningHeartbeatTimeout = 45 * time.Minute
+	collectTimeout          = 20 * time.Minute
+)
+
 // dispatchScheduledWork is the main dispatch loop for the capacity scheduler.
 // Called by both `gt scheduler run` and the daemon heartbeat.
 func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun bool) (int, error) {
@@ -182,6 +187,13 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 			return capacity.ErrCrossRigPrefix
 		},
 		Execute: func(b capacity.PendingBead) error {
+			if b.Context != nil {
+				now := time.Now().UTC()
+				_ = advanceContextState(townRoot, b, capacity.RunStatePreflight, now)
+				_ = advanceContextState(townRoot, b, capacity.RunStateSyncing, now)
+				_ = advanceContextState(townRoot, b, capacity.RunStateDispatched, now)
+				_ = advanceContextState(townRoot, b, capacity.RunStateRunning, now)
+			}
 			result, err := dispatchSingleBead(b, townRoot, actor)
 			if err != nil {
 				return err
@@ -200,6 +212,9 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 		OnSuccess: func(b capacity.PendingBead) error {
 			// OnSuccess may be retried — only do the close here, no side effects.
 			// Route to the correct rig's beads dir (GH#3468).
+			now := time.Now().UTC()
+			_ = advanceContextState(townRoot, b, capacity.RunStateCollecting, now)
+			_ = advanceContextState(townRoot, b, capacity.RunStateSucceeded, now)
 			return beadsForContext(townRoot, b.Context).CloseSlingContext(b.ID, "dispatched")
 		},
 		OnFailure: func(b capacity.PendingBead, err error) {
@@ -227,6 +242,7 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 				_ = events.LogFeed(events.TypeSchedulerDispatchFailed, actor,
 					events.SchedulerDispatchFailedPayload(b.WorkBeadID, b.TargetRig, err.Error()))
 			}
+			_ = advanceContextState(townRoot, b, capacity.RunStateFailed, time.Now().UTC())
 			recordDispatchFailure(beadsForContext(townRoot, b.Context), b, err)
 		},
 		BatchSize:  batchSize,
@@ -321,6 +337,20 @@ func beadsForContext(townRoot string, fields *capacity.SlingContextFields) *bead
 	return beads.NewWithBeadsDir(townRoot, filepath.Join(townRoot, ".beads"))
 }
 
+func advanceContextState(townRoot string, b capacity.PendingBead, to string, at time.Time) error {
+	if b.Context == nil {
+		return nil
+	}
+	if b.Context.RunState == to {
+		return nil
+	}
+	if err := capacity.AdvanceRunState(b.Context, to, at); err != nil {
+		return err
+	}
+	ctxBeads := beadsForContext(townRoot, b.Context)
+	return ctxBeads.UpdateSlingContextFields(b.ID, b.Context)
+}
+
 // cleanupStaleContexts closes invalid and stale sling context beads.
 // Called explicitly before the dispatch cycle to separate cleanup from querying.
 func cleanupStaleContexts(townRoot string) {
@@ -369,7 +399,40 @@ func cleanupStaleContexts(townRoot string) {
 		info, found := workBeadInfo[fields.WorkBeadID]
 		if found && (info.Status == "hooked" || info.Status == "closed" || info.Status == "tombstone") {
 			b := beadsForContext(townRoot, fields)
+			if fields.RunState == capacity.RunStateRunning || fields.RunState == capacity.RunStateCollecting {
+				_ = capacity.AdvanceRunState(fields, capacity.RunStateAbandoned, time.Now().UTC())
+				_ = b.UpdateSlingContextFields(ctx.ID, fields)
+			}
 			_ = b.CloseSlingContext(ctx.ID, "stale-work-bead")
+		}
+	}
+
+	// Third pass: remote run reaper semantics for stale running/collecting contexts.
+	// Running with stale heartbeat -> abandoned.
+	// Collecting with old state update -> abandoned (collect timeout).
+	now := time.Now().UTC()
+	for i, ctx := range staleCheckContexts {
+		fields := staleCheckFields[i]
+		b := beadsForContext(townRoot, fields)
+
+		if fields.RunState == capacity.RunStateRunning && fields.LastHeartbeatAt != "" {
+			if hb, err := time.Parse(time.RFC3339, fields.LastHeartbeatAt); err == nil && now.Sub(hb) > runningHeartbeatTimeout {
+				if capacity.IsValidRunStateTransition(fields.RunState, capacity.RunStateAbandoned) {
+					_ = capacity.AdvanceRunState(fields, capacity.RunStateAbandoned, now)
+					_ = b.UpdateSlingContextFields(ctx.ID, fields)
+				}
+				_ = b.CloseSlingContext(ctx.ID, "stale-heartbeat")
+				continue
+			}
+		}
+		if fields.RunState == capacity.RunStateCollecting && fields.RunStateUpdatedAt != "" {
+			if updated, err := time.Parse(time.RFC3339, fields.RunStateUpdatedAt); err == nil && now.Sub(updated) > collectTimeout {
+				if capacity.IsValidRunStateTransition(fields.RunState, capacity.RunStateAbandoned) {
+					_ = capacity.AdvanceRunState(fields, capacity.RunStateAbandoned, now)
+					_ = b.UpdateSlingContextFields(ctx.ID, fields)
+				}
+				_ = b.CloseSlingContext(ctx.ID, "collect-timeout")
+			}
 		}
 	}
 }

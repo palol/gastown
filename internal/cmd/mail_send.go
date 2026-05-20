@@ -18,6 +18,9 @@ import (
 )
 
 func runMailSend(cmd *cobra.Command, args []string) error {
+	if err := requireLocalControlPlane("gt mail send"); err != nil {
+		return err
+	}
 	// Handle --stdin: read message body from stdin (avoids shell quoting issues)
 	if mailStdin {
 		if mailBody != "" {

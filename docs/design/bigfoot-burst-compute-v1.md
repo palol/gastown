@@ -73,6 +73,17 @@ Planned remote run lifecycle:
 
 This patch documents contract and implements routing + audit substrate needed before full remote runner.
 
+## Current Guardrails Implemented
+
+- Remote control-plane guard:
+  - `gt sling` blocked when `GT_REMOTE_EXECUTOR=1` or `GT_CONTROL_PLANE_MODE=remote-executor`
+  - `gt mail send` blocked in same mode
+  - `gt close` blocked in same mode
+- Scheduler sling context run-state transitions now tracked:
+  - `queued -> preflight -> syncing -> dispatched -> running -> collecting -> succeeded`
+  - failure path sets `failed`
+  - stale-heartbeat / collect-timeout paths set `abandoned`
+
 ## Failure Handling Targets
 
 - Missing bigfoot rig: sling fails fast via existing rig resolution.

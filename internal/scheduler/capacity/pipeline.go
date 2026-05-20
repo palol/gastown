@@ -16,26 +16,33 @@ type PendingBead struct {
 // SlingContextFields holds scheduling parameters stored on a sling context bead.
 // JSON-serialized as the context bead's description.
 type SlingContextFields struct {
-	Version          int    `json:"version"`
-	WorkBeadID       string `json:"work_bead_id"`
-	TargetRig        string `json:"target_rig"`
-	Formula          string `json:"formula,omitempty"`
-	Args             string `json:"args,omitempty"`
-	Vars             string `json:"vars,omitempty"`
-	EnqueuedAt       string `json:"enqueued_at"`
-	Merge            string `json:"merge,omitempty"`
-	Convoy           string `json:"convoy,omitempty"`
-	BaseBranch       string `json:"base_branch,omitempty"`
-	NoMerge          bool   `json:"no_merge,omitempty"`
-	ReviewOnly       bool   `json:"review_only,omitempty"`
-	ComputeTarget    string `json:"compute_target,omitempty"`
-	Account          string `json:"account,omitempty"`
-	Agent            string `json:"agent,omitempty"`
-	HookRawBead      bool   `json:"hook_raw_bead,omitempty"`
-	Owned            bool   `json:"owned,omitempty"`
-	Mode             string `json:"mode,omitempty"`
-	DispatchFailures int    `json:"dispatch_failures,omitempty"`
-	LastFailure      string `json:"last_failure,omitempty"`
+	Version           int    `json:"version"`
+	WorkBeadID        string `json:"work_bead_id"`
+	TargetRig         string `json:"target_rig"`
+	RunState          string `json:"run_state,omitempty"`
+	RunStateUpdatedAt string `json:"run_state_updated_at,omitempty"`
+	LastHeartbeatAt   string `json:"last_heartbeat_at,omitempty"`
+	CollectedAt       string `json:"collected_at,omitempty"`
+	ManifestPath      string `json:"manifest_path,omitempty"`
+	SummaryPath       string `json:"summary_path,omitempty"`
+	PatchPath         string `json:"patch_path,omitempty"`
+	Formula           string `json:"formula,omitempty"`
+	Args              string `json:"args,omitempty"`
+	Vars              string `json:"vars,omitempty"`
+	EnqueuedAt        string `json:"enqueued_at"`
+	Merge             string `json:"merge,omitempty"`
+	Convoy            string `json:"convoy,omitempty"`
+	BaseBranch        string `json:"base_branch,omitempty"`
+	NoMerge           bool   `json:"no_merge,omitempty"`
+	ReviewOnly        bool   `json:"review_only,omitempty"`
+	ComputeTarget     string `json:"compute_target,omitempty"`
+	Account           string `json:"account,omitempty"`
+	Agent             string `json:"agent,omitempty"`
+	HookRawBead       bool   `json:"hook_raw_bead,omitempty"`
+	Owned             bool   `json:"owned,omitempty"`
+	Mode              string `json:"mode,omitempty"`
+	DispatchFailures  int    `json:"dispatch_failures,omitempty"`
+	LastFailure       string `json:"last_failure,omitempty"`
 }
 
 // LabelSlingContext is the label used to identify sling context beads.

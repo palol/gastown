@@ -45,6 +45,9 @@ func init() {
 }
 
 func runClose(cmd *cobra.Command, args []string) error {
+	if err := requireLocalControlPlane("gt close"); err != nil {
+		return err
+	}
 	// Handle --help since DisableFlagParsing bypasses Cobra's help handling
 	if helped, err := checkHelpFlag(cmd, args); helped || err != nil {
 		return err
@@ -208,9 +211,9 @@ func extractBeadIDs(args []string) []string {
 	// Flags that consume a following argument (value flags without = form)
 	valueFlags := map[string]bool{
 		"--reason": true, "-r": true,
-		"--session": true,
-		"--actor": true,
-		"--db": true,
+		"--session":          true,
+		"--actor":            true,
+		"--db":               true,
 		"--dolt-auto-commit": true,
 		// Also handle the --comment alias (before conversion)
 		"--comment": true,
