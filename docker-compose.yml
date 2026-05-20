@@ -24,6 +24,7 @@ services:
       IS_SANDBOX: 1
       GIT_USER: ${GIT_USER:-TestUser}
       GIT_EMAIL: ${GIT_EMAIL:-test@example.com}
+      CURSOR_API_KEY: ${CURSOR_API_KEY:-}
     volumes:
       # FOLDER must be defined in .env file, e.g. FOLDER=/home/user
       # or provided as an environment variable when running docker compose,
