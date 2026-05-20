@@ -699,8 +699,9 @@ func dispatchSingleBead(b capacity.PendingBead, townRoot, _ string) (*SlingResul
 		Args:             dp.Args,
 		Vars:             dp.Vars,
 		Merge:            dp.Merge,
+		// Scheduler dispatch supports base_branch only for now.
+		// resume_branch must ship end-to-end in a separate change.
 		BaseBranch:       dp.BaseBranch,
-		ResumeBranch:     dp.ResumeBranch,
 		NoMerge:          dp.NoMerge,
 		ReviewOnly:       dp.ReviewOnly,
 		Account:          dp.Account,
