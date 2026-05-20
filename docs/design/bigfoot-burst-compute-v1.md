@@ -83,6 +83,11 @@ This patch documents contract and implements routing + audit substrate needed be
   - `queued -> preflight -> syncing -> dispatched -> running -> collecting -> succeeded`
   - failure path sets `failed`
   - stale-heartbeat / collect-timeout paths set `abandoned`
+- Artifact collect validation + hash audit for bigfoot collect phase:
+  - requires `manifest.json` and `summary.md`
+  - optional `patch.diff`
+  - stores `manifest_sha256`, `summary_sha256`, `patch_sha256`
+  - closes context with `collected` or `collect-validation-failed`
 
 ## Failure Handling Targets
 

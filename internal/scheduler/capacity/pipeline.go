@@ -23,9 +23,13 @@ type SlingContextFields struct {
 	RunStateUpdatedAt string `json:"run_state_updated_at,omitempty"`
 	LastHeartbeatAt   string `json:"last_heartbeat_at,omitempty"`
 	CollectedAt       string `json:"collected_at,omitempty"`
+	DispatchRunID     string `json:"dispatch_run_id,omitempty"`
 	ManifestPath      string `json:"manifest_path,omitempty"`
+	ManifestSHA256    string `json:"manifest_sha256,omitempty"`
 	SummaryPath       string `json:"summary_path,omitempty"`
+	SummarySHA256     string `json:"summary_sha256,omitempty"`
 	PatchPath         string `json:"patch_path,omitempty"`
+	PatchSHA256       string `json:"patch_sha256,omitempty"`
 	Formula           string `json:"formula,omitempty"`
 	Args              string `json:"args,omitempty"`
 	Vars              string `json:"vars,omitempty"`

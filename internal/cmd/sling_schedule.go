@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
@@ -148,10 +149,11 @@ func scheduleBead(beadID, rigName string, opts ScheduleOptions) error {
 
 	// Build sling context fields
 	fields := &capacity.SlingContextFields{
-		Version:    1,
-		WorkBeadID: beadID,
-		TargetRig:  rigName,
-		EnqueuedAt: time.Now().UTC().Format(time.RFC3339),
+		Version:       1,
+		WorkBeadID:    beadID,
+		TargetRig:     rigName,
+		EnqueuedAt:    time.Now().UTC().Format(time.RFC3339),
+		DispatchRunID: uuid.New().String(),
 	}
 	if err := capacity.AdvanceRunState(fields, capacity.RunStateQueued, time.Now().UTC()); err != nil {
 		return fmt.Errorf("initializing run state: %w", err)

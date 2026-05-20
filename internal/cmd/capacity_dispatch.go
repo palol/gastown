@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -214,6 +216,11 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 			// Route to the correct rig's beads dir (GH#3468).
 			now := time.Now().UTC()
 			_ = advanceContextState(townRoot, b, capacity.RunStateCollecting, now)
+			if b.Context != nil && b.Context.ComputeTarget == computeTargetBigfoot {
+				// Bigfoot path: wait for collect/reconcile phase. Reaper will validate
+				// manifest/summary and close later.
+				return nil
+			}
 			_ = advanceContextState(townRoot, b, capacity.RunStateSucceeded, now)
 			return beadsForContext(townRoot, b.Context).CloseSlingContext(b.ID, "dispatched")
 		},
@@ -398,6 +405,16 @@ func cleanupStaleContexts(townRoot string) {
 		fields := staleCheckFields[i]
 		info, found := workBeadInfo[fields.WorkBeadID]
 		if found && (info.Status == "hooked" || info.Status == "closed" || info.Status == "tombstone") {
+			if info.Status == "hooked" && fields.ComputeTarget == computeTargetBigfoot &&
+				(fields.RunState == capacity.RunStateRunning ||
+					fields.RunState == capacity.RunStateCollecting ||
+					fields.RunState == capacity.RunStateDispatched ||
+					fields.RunState == capacity.RunStateSyncing ||
+					fields.RunState == capacity.RunStatePreflight) {
+				// Bigfoot bursts stay hooked while remote run progresses. Do not
+				// close context as stale just because work bead remains hooked.
+				continue
+			}
 			b := beadsForContext(townRoot, fields)
 			if fields.RunState == capacity.RunStateRunning || fields.RunState == capacity.RunStateCollecting {
 				_ = capacity.AdvanceRunState(fields, capacity.RunStateAbandoned, time.Now().UTC())
@@ -415,26 +432,108 @@ func cleanupStaleContexts(townRoot string) {
 		fields := staleCheckFields[i]
 		b := beadsForContext(townRoot, fields)
 
-		if fields.RunState == capacity.RunStateRunning && fields.LastHeartbeatAt != "" {
-			if hb, err := time.Parse(time.RFC3339, fields.LastHeartbeatAt); err == nil && now.Sub(hb) > runningHeartbeatTimeout {
-				if capacity.IsValidRunStateTransition(fields.RunState, capacity.RunStateAbandoned) {
-					_ = capacity.AdvanceRunState(fields, capacity.RunStateAbandoned, now)
+		if fields.RunState == capacity.RunStateCollecting && fields.ComputeTarget == computeTargetBigfoot {
+			ready, err := collectAndAuditBurstArtifacts(townRoot, fields)
+			if err != nil {
+				if capacity.IsValidRunStateTransition(fields.RunState, capacity.RunStateFailed) {
+					_ = capacity.AdvanceRunState(fields, capacity.RunStateFailed, now)
 					_ = b.UpdateSlingContextFields(ctx.ID, fields)
 				}
-				_ = b.CloseSlingContext(ctx.ID, "stale-heartbeat")
+				_ = b.CloseSlingContext(ctx.ID, "collect-validation-failed")
+				continue
+			}
+			if ready {
+				if capacity.IsValidRunStateTransition(fields.RunState, capacity.RunStateSucceeded) {
+					_ = capacity.AdvanceRunState(fields, capacity.RunStateSucceeded, now)
+					_ = b.UpdateSlingContextFields(ctx.ID, fields)
+				}
+				_ = b.CloseSlingContext(ctx.ID, "collected")
 				continue
 			}
 		}
-		if fields.RunState == capacity.RunStateCollecting && fields.RunStateUpdatedAt != "" {
-			if updated, err := time.Parse(time.RFC3339, fields.RunStateUpdatedAt); err == nil && now.Sub(updated) > collectTimeout {
-				if capacity.IsValidRunStateTransition(fields.RunState, capacity.RunStateAbandoned) {
-					_ = capacity.AdvanceRunState(fields, capacity.RunStateAbandoned, now)
-					_ = b.UpdateSlingContextFields(ctx.ID, fields)
-				}
-				_ = b.CloseSlingContext(ctx.ID, "collect-timeout")
+
+		action := determineRunReaperAction(fields, now)
+		if action.CloseReason != "" {
+			if action.NextState != "" && capacity.IsValidRunStateTransition(fields.RunState, action.NextState) {
+				_ = capacity.AdvanceRunState(fields, action.NextState, now)
+				_ = b.UpdateSlingContextFields(ctx.ID, fields)
 			}
+			_ = b.CloseSlingContext(ctx.ID, action.CloseReason)
 		}
 	}
+}
+
+type runReaperAction struct {
+	CloseReason string
+	NextState   string
+}
+
+func determineRunReaperAction(fields *capacity.SlingContextFields, now time.Time) runReaperAction {
+	if fields == nil {
+		return runReaperAction{}
+	}
+	if fields.RunState == capacity.RunStateRunning && fields.LastHeartbeatAt != "" {
+		if hb, err := time.Parse(time.RFC3339, fields.LastHeartbeatAt); err == nil && now.Sub(hb) > runningHeartbeatTimeout {
+			return runReaperAction{CloseReason: "stale-heartbeat", NextState: capacity.RunStateAbandoned}
+		}
+	}
+	if fields.RunState == capacity.RunStateCollecting && fields.RunStateUpdatedAt != "" {
+		if updated, err := time.Parse(time.RFC3339, fields.RunStateUpdatedAt); err == nil && now.Sub(updated) > collectTimeout {
+			return runReaperAction{CloseReason: "collect-timeout", NextState: capacity.RunStateAbandoned}
+		}
+	}
+	return runReaperAction{}
+}
+
+func collectAndAuditBurstArtifacts(townRoot string, fields *capacity.SlingContextFields) (bool, error) {
+	if fields == nil || fields.DispatchRunID == "" {
+		return false, nil
+	}
+	inbox := strings.TrimSpace(os.Getenv("GT_BIGFOOT_RUN_INBOX"))
+	if inbox == "" {
+		inbox = filepath.Join(townRoot, "var", "bigfoot-runs")
+	}
+	runDir := filepath.Join(inbox, fields.DispatchRunID)
+	manifest := filepath.Join(runDir, "manifest.json")
+	summary := filepath.Join(runDir, "summary.md")
+	patch := filepath.Join(runDir, "patch.diff")
+
+	if _, err := os.Stat(manifest); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if _, err := os.Stat(summary); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	manifestBytes, err := os.ReadFile(manifest)
+	if err != nil {
+		return false, err
+	}
+	var manifestJSON map[string]any
+	if err := json.Unmarshal(manifestBytes, &manifestJSON); err != nil {
+		return false, fmt.Errorf("invalid manifest.json: %w", err)
+	}
+	summaryBytes, err := os.ReadFile(summary)
+	if err != nil {
+		return false, err
+	}
+
+	fields.ManifestPath = manifest
+	fields.SummaryPath = summary
+	fields.ManifestSHA256 = fmt.Sprintf("%x", sha256.Sum256(manifestBytes))
+	fields.SummarySHA256 = fmt.Sprintf("%x", sha256.Sum256(summaryBytes))
+
+	if patchBytes, err := os.ReadFile(patch); err == nil {
+		fields.PatchPath = patch
+		fields.PatchSHA256 = fmt.Sprintf("%x", sha256.Sum256(patchBytes))
+	}
+	return true, nil
 }
 
 // beadStatusInfo holds batch-fetched bead status, title, and labels.
