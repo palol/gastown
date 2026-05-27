@@ -256,8 +256,8 @@ type rigsConfigBeadsConfig struct {
 }
 
 type rigsConfigFile struct {
-	Version int                         `json:"version"`
-	Rigs    map[string]rigsConfigEntry  `json:"rigs"`
+	Version int                        `json:"version"`
+	Rigs    map[string]rigsConfigEntry `json:"rigs"`
 }
 
 func loadRigsConfig(path string) (*rigsConfigFile, error) {
@@ -299,7 +299,19 @@ func (r *realDBPrefixGetter) GetDBPrefix(rigPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(output)), nil
+	return normalizeDBPrefix(string(output)), nil
+}
+
+// normalizeDBPrefix interprets the stdout of "bd config get issue_prefix".
+// When the key is unset, bd prints "<key> (not set)" to stdout and exits 0;
+// normalize that (and an empty result) to "" so callers can treat it uniformly
+// as "no prefix set" instead of comparing against a human-readable sentinel.
+func normalizeDBPrefix(output string) string {
+	prefix := strings.TrimSpace(output)
+	if prefix == "" || strings.HasSuffix(prefix, "(not set)") {
+		return ""
+	}
+	return prefix
 }
 
 // DatabasePrefixCheck detects when a rig's database has a different issue_prefix
@@ -317,14 +329,15 @@ func (r *realDBPrefixGetter) GetDBPrefix(rigPath string) (string, error) {
 // would overwrite the shared database's prefix with the rig's prefix.
 type DatabasePrefixCheck struct {
 	FixableCheck
-	mismatches     []databasePrefixMismatch
-	prefixGetter   dbPrefixGetter
+	mismatches   []databasePrefixMismatch
+	prefixGetter dbPrefixGetter
 }
 
 type databasePrefixMismatch struct {
 	rigPath      string
 	routesPrefix string // From routes.jsonl (without trailing hyphen)
-	dbPrefix     string // From database config
+	dbPrefix     string // From database config ("" when unset)
+	unset        bool   // true when the database has no issue_prefix set
 }
 
 // NewDatabasePrefixCheck creates a new database prefix check.
@@ -419,12 +432,19 @@ func (c *DatabasePrefixCheck) Run(ctx *CheckContext) *CheckResult {
 		routesPrefix := strings.TrimSuffix(route.Prefix, "-")
 
 		if dbPrefix != routesPrefix {
-			problems = append(problems, fmt.Sprintf("Route '%s': routes.jsonl says '%s', database has '%s'",
-				route.Path, routesPrefix, dbPrefix))
+			unset := dbPrefix == ""
+			if unset {
+				problems = append(problems, fmt.Sprintf("Route '%s': routes.jsonl says '%s', database has no issue_prefix set",
+					route.Path, routesPrefix))
+			} else {
+				problems = append(problems, fmt.Sprintf("Route '%s': routes.jsonl says '%s', database has '%s'",
+					route.Path, routesPrefix, dbPrefix))
+			}
 			c.mismatches = append(c.mismatches, databasePrefixMismatch{
 				rigPath:      route.Path,
 				routesPrefix: routesPrefix,
 				dbPrefix:     dbPrefix,
+				unset:        unset,
 			})
 		}
 	}
@@ -443,15 +463,21 @@ func (c *DatabasePrefixCheck) Run(ctx *CheckContext) *CheckResult {
 		Status:   StatusWarning,
 		Message:  fmt.Sprintf("%d database prefix mismatch(es) with routes.jsonl", len(c.mismatches)),
 		Details:  problems,
-		FixHint:  "Run 'gt doctor --fix' to update database configs to match routes.jsonl",
+		FixHint:  "Changing a database's issue_prefix is manual: for an unset prefix run 'bd bootstrap' (or 'bd init --prefix <p>-') in the rig; for a wrong-but-set prefix run 'bd rename-prefix <p>-'. 'gt doctor --fix' prints per-rig guidance but does not change the prefix.",
 		Category: c.Category(),
 	}
 }
 
-// Fix updates database configs to match routes.jsonl prefixes.
-// Only fixes rigs with their own database; rigs that redirect to a shared
-// database are skipped by Run() and will not appear in c.mismatches.
-// Logs each change visibly to prevent silent prefix corruption (GH#2455).
+// Fix is guidance-only: it prints the correct manual command for each mismatch
+// and returns nil without mutating any database.
+//
+// It deliberately does NOT run "bd config set issue_prefix": bd rejects that
+// command (issue_prefix is settable only via init/bootstrap/rename-prefix), so
+// the previous implementation could never succeed. The correct command also
+// depends on the situation — an unset prefix needs 'bd bootstrap'/'bd init',
+// while a wrong-but-set prefix needs 'bd rename-prefix', which rewrites every
+// issue ID. Both are sensitive enough to leave to a human. The mismatch is not
+// auto-resolved and will continue to be reported until fixed manually.
 func (c *DatabasePrefixCheck) Fix(ctx *CheckContext) error {
 	if len(c.mismatches) == 0 {
 		result := c.Run(ctx)
@@ -461,14 +487,14 @@ func (c *DatabasePrefixCheck) Fix(ctx *CheckContext) error {
 	}
 
 	for _, m := range c.mismatches {
-		// Safety: log what we're about to change so corruption is visible (GH#2455)
-		fmt.Fprintf(os.Stderr, "WARNING: database-prefix fix: %s: changing issue_prefix from %q to %q (per routes.jsonl)\n",
-			m.rigPath, m.dbPrefix, m.routesPrefix)
-
-		cmd := exec.Command("bd", "config", "set", "issue_prefix", m.routesPrefix)
-		cmd.Dir = filepath.Join(ctx.TownRoot, m.rigPath)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("updating %s: %s", m.rigPath, strings.TrimSpace(string(output)))
+		if m.unset {
+			fmt.Fprintf(os.Stderr, "database-prefix: %s has no issue_prefix set; routes.jsonl expects %q.\n"+
+				"  Initialize it manually, e.g. run 'bd bootstrap' (or 'bd init --prefix %s-') in %s.\n",
+				m.rigPath, m.routesPrefix, m.routesPrefix, m.rigPath)
+		} else {
+			fmt.Fprintf(os.Stderr, "database-prefix: %s has issue_prefix %q but routes.jsonl expects %q.\n"+
+				"  Rename it manually: run 'bd rename-prefix %s-' in %s.\n",
+				m.rigPath, m.dbPrefix, m.routesPrefix, m.routesPrefix, m.rigPath)
 		}
 	}
 

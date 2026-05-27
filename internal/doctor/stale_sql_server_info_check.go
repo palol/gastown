@@ -96,7 +96,7 @@ func (c *StaleSQLServerInfoCheck) Run(ctx *CheckContext) *CheckResult {
 		Status:  StatusWarning,
 		Message: fmt.Sprintf("%d stale sql-server.info file(s) from dead Dolt servers", len(c.staleFiles)),
 		Details: details,
-		FixHint: "Restart the Dolt server to clear stale sql-server.info files (Dolt writes and cleans these itself)",
+		FixHint: "Harmless for rigs in dolt_mode=server backed by the central Dolt server: bd connects via host:port (from .beads/metadata.json), not this file, so a dead PID here does not break anything. Note the central server does NOT manage per-rig dolt directories, so restarting it will not clear this file — only the local Dolt server that owns this directory does. Leave it unless a local server actually runs here.",
 	}
 }
 

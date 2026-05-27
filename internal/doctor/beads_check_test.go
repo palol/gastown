@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -328,8 +329,8 @@ func TestDatabasePrefixCheck_NoBeadsDir(t *testing.T) {
 
 // mockDBPrefixGetter returns canned prefixes by directory for testing.
 type mockDBPrefixGetter struct {
-	prefixes   map[string]string // rigPath -> prefix
-	setCalls   []prefixSetCall   // recorded Fix calls (not used by getter, but handy for the mock)
+	prefixes map[string]string // rigPath -> prefix
+	setCalls []prefixSetCall   // recorded Fix calls (not used by getter, but handy for the mock)
 }
 
 type prefixSetCall struct {
@@ -550,5 +551,119 @@ func TestDatabasePrefixCheck_MixedOwnAndRedirect(t *testing.T) {
 	}
 	if check.mismatches[0].rigPath != "mission_manager" {
 		t.Errorf("expected mismatch for mission_manager, got %s", check.mismatches[0].rigPath)
+	}
+}
+
+func TestDatabasePrefixCheck_UnsetPrefixFlaggedAsUnset(t *testing.T) {
+	// A rig with its own DB whose issue_prefix is unset (empty) should be
+	// flagged as a mismatch with the unset flag set, and the detail should say
+	// the database has no issue_prefix rather than printing a confusing value.
+	tmpDir := t.TempDir()
+
+	townBeads := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	routesContent := `{"prefix":"hq-","path":"."}
+{"prefix":"lfo-","path":"ld_fiftyone"}`
+	if err := os.WriteFile(filepath.Join(townBeads, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rigBeads := filepath.Join(tmpDir, "ld_fiftyone", ".beads")
+	if err := os.MkdirAll(rigBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty string signals an unset issue_prefix (bd prints "<key> (not set)",
+	// normalized to "" by the getter).
+	mock := &mockDBPrefixGetter{
+		prefixes: map[string]string{
+			filepath.Join(tmpDir, "ld_fiftyone"): "",
+		},
+	}
+
+	check := NewDatabasePrefixCheck()
+	check.prefixGetter = mock
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	result := check.Run(ctx)
+
+	if result.Status != StatusWarning {
+		t.Fatalf("expected StatusWarning for unset prefix, got %v: %s", result.Status, result.Message)
+	}
+	if len(check.mismatches) != 1 {
+		t.Fatalf("expected 1 mismatch, got %d", len(check.mismatches))
+	}
+	m := check.mismatches[0]
+	if !m.unset {
+		t.Errorf("expected mismatch.unset = true for empty db prefix")
+	}
+	if m.routesPrefix != "lfo" {
+		t.Errorf("expected routesPrefix 'lfo', got %q", m.routesPrefix)
+	}
+	if len(result.Details) != 1 || !strings.Contains(result.Details[0], "no issue_prefix") {
+		t.Errorf("expected detail to mention 'no issue_prefix', got %v", result.Details)
+	}
+}
+
+func TestDatabasePrefixCheck_FixIsGuidanceOnly(t *testing.T) {
+	// Fix must NOT shell out to 'bd config set issue_prefix' (which bd rejects)
+	// or otherwise mutate state. It emits guidance and returns nil, and the
+	// mismatch remains until a human resolves it.
+	tmpDir := t.TempDir()
+
+	townBeads := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesContent := `{"prefix":"hq-","path":"."}
+{"prefix":"mm-","path":"mission_manager"}`
+	if err := os.WriteFile(filepath.Join(townBeads, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mmBeads := filepath.Join(tmpDir, "mission_manager", ".beads")
+	if err := os.MkdirAll(mmBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockDBPrefixGetter{
+		prefixes: map[string]string{
+			filepath.Join(tmpDir, "mission_manager"): "wrong",
+		},
+	}
+
+	check := NewDatabasePrefixCheck()
+	check.prefixGetter = mock
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	if result := check.Run(ctx); result.Status != StatusWarning {
+		t.Fatalf("setup: expected StatusWarning, got %v", result.Status)
+	}
+
+	// Fix is guidance-only: returns nil without changing anything.
+	if err := check.Fix(ctx); err != nil {
+		t.Fatalf("expected Fix to return nil (guidance-only), got %v", err)
+	}
+
+	// The mismatch is not auto-resolved; re-running still warns.
+	if result := check.Run(ctx); result.Status != StatusWarning {
+		t.Errorf("expected mismatch to persist after guidance-only Fix, got %v", result.Status)
+	}
+}
+
+func TestNormalizeDBPrefix(t *testing.T) {
+	cases := map[string]string{
+		"lfo":                    "lfo",
+		"  lal  ":                "lal",
+		"":                       "",
+		"issue_prefix (not set)": "",
+		"prefix (not set)":       "",
+	}
+	for input, want := range cases {
+		if got := normalizeDBPrefix(input); got != want {
+			t.Errorf("normalizeDBPrefix(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
