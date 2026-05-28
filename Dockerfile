@@ -32,6 +32,14 @@ ENV PATH="/app/gastown:/usr/local/go/bin:/home/agent/go/bin:/home/agent/.local/b
 RUN curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 RUN curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash
 
+# Install Google Cloud CLI (gcloud + bq) for BigQuery access. Auth is provided
+# at runtime by mounting the host's ~/.config/gcloud (see docker-compose.auth-host.yml)
+# and copying it into the agent home in docker-entrypoint.sh.
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list && \
+    apt-get update && apt-get install -y google-cloud-cli && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
 # Set up directories
 RUN mkdir -p /app /gt /gt/.dolt-data && chown -R agent:agent /app /gt
 
