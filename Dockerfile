@@ -32,6 +32,25 @@ ENV PATH="/app/gastown:/usr/local/go/bin:/home/agent/go/bin:/home/agent/.local/b
 RUN curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 RUN curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash
 
+# Override bd with the import-guard backport: v1.0.4 + the server-mode auto-import
+# clobber fix (restored top-level emptiness guard, equivalent to upstream beads
+# PR #4170). Stock 1.0.4 re-imports issues.jsonl into the already-populated Dolt
+# sql-server DB on every write, hanging/reverting hq writes. Build from the pinned
+# fix branch until a fixed upstream release (>1.0.4 containing #4170) ships, then
+# revert this to the release install above.
+RUN git clone --depth 1 -b fix/import-guard-104 https://github.com/palol/beads /tmp/beads-src && \
+    cd /tmp/beads-src && GOTOOLCHAIN=auto make build && \
+    install -m 0755 ./bd /usr/local/bin/bd && \
+    cd / && rm -rf /tmp/beads-src
+
+# Install Google Cloud CLI (gcloud + bq) for BigQuery access. Auth is provided
+# at runtime by mounting the host's ~/.config/gcloud (see docker-compose.auth-host.yml)
+# and copying it into the agent home in docker-entrypoint.sh.
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list && \
+    apt-get update && apt-get install -y google-cloud-cli && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
 # Set up directories
 RUN mkdir -p /app /gt /gt/.dolt-data && chown -R agent:agent /app /gt
 
