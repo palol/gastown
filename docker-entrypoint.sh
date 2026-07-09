@@ -25,6 +25,16 @@ if [ -d /mnt/gcloud-host ]; then
     fi
 fi
 
+# Claude Code auth: CLAUDE_CODE_OAUTH_TOKEN (long-lived setup-token) is the source
+# of truth. A file-based ~/.claude/.credentials.json (e.g. from an accidental
+# in-container `claude /login`) shadows the env token with a short-lived 8h OAuth
+# token that can't refresh headless — this caused town-wide 401 outages
+# (Jul 1-2 and Jul 9, 2026). Purge it on every start so the env token always wins.
+if [ -f /home/agent/.claude/.credentials.json ]; then
+    rm -f /home/agent/.claude/.credentials.json
+    echo "Removed stale file-based Claude credentials; using CLAUDE_CODE_OAUTH_TOKEN."
+fi
+
 if [ ! -f /gt/mayor/town.json ]; then
     echo "Initializing Gas Town workspace at /gt..."
     /app/gastown/gt install /gt --git
