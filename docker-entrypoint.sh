@@ -25,6 +25,42 @@ if [ -d /mnt/gcloud-host ]; then
     fi
 fi
 
+# Lab SSH access: copy the dedicated key (mounted read-only at /mnt/ssh-host/gt_lab)
+# into ~/.ssh with strict perms and write a scoped config. A read-only mount keeps
+# host uid/perms, and SSH refuses keys that are group/world-readable — so we copy +
+# chmod rather than use the mount in place. Only the hosts listed here are reachable;
+# no other key material (broad id_rsa, bigfoot's own key) enters the container.
+if [ -f /mnt/ssh-host/gt_lab ]; then
+    mkdir -p /home/agent/.ssh && chmod 700 /home/agent/.ssh
+    cp /mnt/ssh-host/gt_lab /home/agent/.ssh/gt_lab && chmod 600 /home/agent/.ssh/gt_lab
+    cat > /home/agent/.ssh/config <<'EOF'
+Host lva
+    HostName 192.168.50.224
+    User lookdeep
+    IdentityFile /home/agent/.ssh/gt_lab
+    IdentitiesOnly yes
+Host lvupa0
+    HostName 192.168.50.249
+    User lookdeep
+    IdentityFile /home/agent/.ssh/gt_lab
+    IdentitiesOnly yes
+Host lvupa1
+    HostName 10.0.0.44
+    User lookdeep
+    IdentityFile /home/agent/.ssh/gt_lab
+    IdentitiesOnly yes
+Host bigfoot
+    HostName 10.0.0.23
+    User paolo
+    IdentityFile /home/agent/.ssh/gt_lab
+    IdentitiesOnly yes
+Host *
+    StrictHostKeyChecking accept-new
+EOF
+    chmod 600 /home/agent/.ssh/config
+    echo "Configured scoped lab SSH access (lva, lvupa0, lvupa1, bigfoot)."
+fi
+
 # Claude Code auth: CLAUDE_CODE_OAUTH_TOKEN (long-lived setup-token) is the source
 # of truth. A file-based ~/.claude/.credentials.json (e.g. from an accidental
 # in-container `claude /login`) shadows the env token with a short-lived 8h OAuth

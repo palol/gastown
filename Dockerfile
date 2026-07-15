@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     zsh \
     gh \
     netcat-openbsd \
+    openssh-client \
     tini \
     vim \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
