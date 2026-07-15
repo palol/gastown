@@ -42,4 +42,7 @@ services:
 
 volumes:
   agent-home:
+  # Pre-existing Dolt data volume created outside this compose project; declared
+  # external so Compose reuses it silently instead of warning about ownership.
   dolt-data:
+    external: true
