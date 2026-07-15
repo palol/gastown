@@ -43,6 +43,9 @@ services:
 volumes:
   agent-home:
   # Pre-existing Dolt data volume created outside this compose project; declared
-  # external so Compose reuses it silently instead of warning about ownership.
+  # external (with its real name) so Compose reuses it silently instead of warning.
+  # Without name:, external would resolve to "dolt-data" (which doesn't exist) and
+  # `up` would fail — external volumes are never auto-created.
   dolt-data:
     external: true
+    name: gastown_dolt-data
